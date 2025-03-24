@@ -367,8 +367,28 @@ def main():
                     pnl_df = pd.concat(daily_series_list, axis=1)
                     pnl_df = pnl_df.fillna(0)
                     corr_matrix = pnl_df.corr()
-                    fig_corr = px.imshow(corr_matrix, text_auto=True, aspect="auto", title="Correlation Heatmap")
+
+                    # Create heatmap with dynamic sizing based on number of strategies.
+                    fig_corr = px.imshow(corr_matrix, text_auto=True, title="Correlation Heatmap")
+                    # Determine dynamic size based on number of strategies (cells)
+                    cell_size = 100  # Minimum pixel size per cell (adjust as needed)
+                    n = len(corr_matrix.columns)
+                    fig_corr.update_layout(
+                        width=max(800, cell_size * n),
+                        height=max(600, cell_size * n),
+                        margin=dict(l=50, r=50, t=50, b=50)
+                    )
+                    # Optionally adjust font size of correlation values.
+                    fig_corr.update_traces(textfont=dict(size=12))
+
                     st.plotly_chart(fig_corr, use_container_width=True)
+
+                    # Add a download button to export a high-resolution PNG of the heatmap.
+                    try:
+                        img_bytes = fig_corr.to_image(format="png", scale=2)  # scale=2 for higher resolution
+                        st.download_button("Download Correlation Heatmap (PNG)", data=img_bytes, file_name="correlation_heatmap.png", mime="image/png")
+                    except Exception as e:
+                        st.error("Error generating PNG download. Ensure you have kaleido installed: pip install -U kaleido")
 
 if __name__ == "__main__":
     main()

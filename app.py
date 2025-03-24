@@ -134,6 +134,27 @@ def color_negative_positive(val):
     except Exception:
         return ''
 
+def select_diversified_strategies(corr_matrix, threshold=0.65):
+    """
+    Greedily remove strategies until no pair of remaining strategies has a correlation exceeding the threshold.
+    Returns the list of selected strategies.
+    """
+    strategies = list(corr_matrix.index)
+    while True:
+        high_corr_pairs = [
+            (i, j) for i in strategies for j in strategies 
+            if i != j and corr_matrix.loc[i, j] > threshold
+        ]
+        if not high_corr_pairs:
+            break
+        count = {strategy: 0 for strategy in strategies}
+        for i, j in high_corr_pairs:
+            count[i] += 1
+            count[j] += 1
+        worst_strategy = max(count, key=count.get)
+        strategies.remove(worst_strategy)
+    return strategies
+
 # --- Main App Function ---
 
 def main():
@@ -381,6 +402,29 @@ def main():
                     # Rotate x-axis labels vertically.
                     fig_corr.update_xaxes(tickangle=90)
                     st.plotly_chart(fig_corr, use_container_width=True)
+                    
+                    # Diversified Portfolio Optimization
+                    st.write("### Diversified Portfolio Optimization")
+                    threshold = st.slider("Set correlation threshold", min_value=0.0, max_value=1.0, value=0.65, step=0.01)
+                    if st.button("Run Portfolio Optimization"):
+                        selected_strategies = select_diversified_strategies(corr_matrix, threshold)
+                        eliminated = [s for s in corr_matrix.index if s not in selected_strategies]
+                        st.write(f"**Selected Strategies (total: {len(selected_strategies)}):** {selected_strategies}")
+                        st.write(f"**Eliminated Strategies:** {eliminated}")
+                        
+                        if len(selected_strategies) > 1:
+                            diversified_corr = corr_matrix.loc[selected_strategies, selected_strategies]
+                            fig_div = px.imshow(
+                                diversified_corr,
+                                text_auto=".2f",
+                                aspect="auto",
+                                title="Diversified Strategies Correlation Heatmap",
+                                color_continuous_scale=custom_color_scale,
+                                zmin=-1,
+                                zmax=1
+                            )
+                            fig_div.update_xaxes(tickangle=90)
+                            st.plotly_chart(fig_div, use_container_width=True)
 
 if __name__ == "__main__":
     main()

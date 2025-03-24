@@ -378,6 +378,8 @@ def main():
                         zmin=-1,
                         zmax=1
                     )
+                    # Rotate x-axis labels vertically.
+                    fig_corr.update_xaxes(tickangle=90)
                     st.plotly_chart(fig_corr, use_container_width=True)
 
 if __name__ == "__main__":

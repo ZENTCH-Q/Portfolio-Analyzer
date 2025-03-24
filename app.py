@@ -367,7 +367,17 @@ def main():
                     pnl_df = pd.concat(daily_series_list, axis=1)
                     pnl_df = pnl_df.fillna(0)
                     corr_matrix = pnl_df.corr()
-                    fig_corr = px.imshow(corr_matrix, text_auto=True, aspect="auto", title="Correlation Heatmap")
+                    # Custom diverging color scale: -1 = red, 0 = white, +1 = dark blue.
+                    custom_color_scale = [(0, "red"), (0.5, "white"), (1, "darkblue")]
+                    fig_corr = px.imshow(
+                        corr_matrix,
+                        text_auto=".2f",
+                        aspect="auto",
+                        title="Correlation Heatmap",
+                        color_continuous_scale=custom_color_scale,
+                        zmin=-1,
+                        zmax=1
+                    )
                     st.plotly_chart(fig_corr, use_container_width=True)
 
 if __name__ == "__main__":

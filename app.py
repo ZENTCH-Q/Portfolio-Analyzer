@@ -369,7 +369,7 @@ def main():
                     corr_matrix = pnl_df.corr()
 
                     # Create heatmap with dynamic sizing based on number of strategies.
-                    fig_corr = px.imshow(corr_matrix, text_auto=True, title="Correlation Heatmap")
+                    fig_corr = px.imshow(corr_matrix, text_auto=True, title="Correlation Heatmap", color_continuous_scale="RdBu")
                     # Determine dynamic size based on number of strategies (cells)
                     cell_size = 100  # Minimum pixel size per cell (adjust as needed)
                     n = len(corr_matrix.columns)
@@ -378,8 +378,10 @@ def main():
                         height=max(600, cell_size * n),
                         margin=dict(l=50, r=50, t=50, b=50)
                     )
-                    # Optionally adjust font size of correlation values.
-                    fig_corr.update_traces(textfont=dict(size=12))
+                    # Rotate x-axis tick labels to avoid overlap.
+                    fig_corr.update_xaxes(tickangle=45)
+                    # Set a custom text template and reduce font size to avoid overlapping.
+                    fig_corr.update_traces(texttemplate="%{z:.2f}", textfont_size=10)
 
                     st.plotly_chart(fig_corr, use_container_width=True)
 

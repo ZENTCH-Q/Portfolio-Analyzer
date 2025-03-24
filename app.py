@@ -368,15 +368,30 @@ def main():
                     pnl_df = pnl_df.fillna(0)
                     corr_matrix = pnl_df.corr()
 
-                    # Create heatmap with dynamic sizing based on number of strategies.
-                    fig_corr = px.imshow(corr_matrix, text_auto=True, title="Correlation Heatmap", color_continuous_scale="RdBu")
+                    # Define a custom diverging color scale:
+                    # - At -1: Blue (#0000FF)
+                    # - At 0 : Intermediate mix (#4000BF)
+                    # - At 1 : Purple (#800080)
+                    custom_colorscale = [
+                        [0.0, "#0000FF"],
+                        [0.5, "#4000BF"],
+                        [1.0, "#800080"]
+                    ]
+                    
+                    fig_corr = px.imshow(
+                        corr_matrix,
+                        text_auto=True,
+                        title="Correlation Heatmap",
+                        color_continuous_scale=custom_colorscale,
+                        range_color=[-1, 1]
+                    )
                     # Determine dynamic size based on number of strategies (cells)
                     cell_size = 100  # Minimum pixel size per cell (adjust as needed)
                     n = len(corr_matrix.columns)
                     fig_corr.update_layout(
                         width=max(800, cell_size * n),
                         height=max(600, cell_size * n),
-                        margin=dict(l=50, r=50, t=50, b=50)
+                        margin=dict(l=20, r=20, t=50, b=50)
                     )
                     # Rotate x-axis tick labels to avoid overlap.
                     fig_corr.update_xaxes(tickangle=45)

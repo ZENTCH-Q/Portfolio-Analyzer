@@ -227,7 +227,6 @@ def main():
                     ytd_series = strategy_trades.set_index(pd.to_datetime(strategy_trades[date_column]))['pnl'].resample('YE').sum() * 100
                     ytd_series.index = ytd_series.index.year
                     pivot_table["YTD"] = ytd_series
-                    # Apply two decimal formatting and a dark blue gradient.
                     styled_table = pivot_table.style.format("{:.2f}%").background_gradient(cmap='Blues')
                     st.dataframe(styled_table, use_container_width=True)
         
@@ -337,7 +336,6 @@ def main():
                     ytd_series_portfolio = portfolio_daily_pnl.resample('YE').sum() * 100
                     ytd_series_portfolio.index = ytd_series_portfolio.index.year
                     pivot_table_portfolio["YTD"] = ytd_series_portfolio
-                    # Apply two decimal formatting and a dark blue gradient.
                     styled_table_portfolio = pivot_table_portfolio.style.format("{:.2f}%").background_gradient(cmap='Blues')
                     st.dataframe(styled_table_portfolio, use_container_width=True)
             else:

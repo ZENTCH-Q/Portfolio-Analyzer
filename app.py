@@ -1,3 +1,4 @@
+import re
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -18,62 +19,70 @@ def to_percentage(val):
         return "N/A"
 
 def detect_time_interval(df, time_col):
-    """Automatically detect the time interval from a given date column."""
+    """
+    Detect the actual interval between timestamps and return a string like "5min", "2h", or "1d".
+    """
     df[time_col] = pd.to_datetime(df[time_col])
     df = df.sort_values(time_col)
     time_diffs = df[time_col].diff().dropna()
     if time_diffs.empty:
         return None
     median_diff = time_diffs.median().total_seconds()
-    if median_diff < 60:
-        return 'seconds'
-    elif median_diff < 3600:
-        return 'minute'
-    elif median_diff < 86400:
-        return 'hourly'
-    elif median_diff < 604800:
-        return 'daily'
-    elif median_diff < 2592000:
-        return 'weekly'
-    elif median_diff < 31536000:
-        return 'monthly'
-    else:
-        return 'yearly'
+    # Calculate minutes (rounded)
+    minutes = round(median_diff / 60)
+    if minutes < 60:
+        return f"{minutes}min"
+    # Calculate hours (rounded)
+    hours = round(minutes / 60)
+    if hours < 24:
+        return f"{hours}h"
+    # Otherwise, return days
+    days = round(hours / 24)
+    return f"{days}d"
 
 def get_periods_per_year(interval):
     """
     Return the number of periods per year for a given interval.
-    For crypto markets, we use 365 days for daily data.
+    Supports custom intervals such as "2h", "10min", "1d", etc.
+    
+    The function uses a regex to extract a numeric value and a unit.
+    For example:
+      - "2h"   -> 8760 / 2 = 4380 periods per year,
+      - "10min"-> 525600 / 10 = 52560 periods per year,
+      - "1d"   -> 365 / 1 = 365 periods per year.
     """
-    mapping = {
-        'seconds': 31536000,    # 365 * 24 * 3600
-        'minute': 525600,       # 365 * 24 * 60
-        'hourly': 8760,         # 365 * 24
-        'daily': 365,           # Crypto markets trade 7 days a week
-        'weekly': 52,
-        'monthly': 12,
-        'quarterly': 4,
-        'yearly': 1
-    }
-    return mapping.get(interval.lower(), 365)
+    m = re.match(r"(\d+)\s*(s|sec|second|seconds|m|min|minute|minutes|h|hr|hour|hours|d|day|days)", interval, re.IGNORECASE)
+    if m:
+        number, unit = m.groups()
+        number = float(number)
+        unit = unit.lower()
+        if unit in ['s', 'sec', 'second', 'seconds']:
+            return 31536000 / number
+        elif unit in ['m', 'min', 'minute', 'minutes']:
+            return 525600 / number
+        elif unit in ['h', 'hr', 'hour', 'hours']:
+            return 8760 / number
+        elif unit in ['d', 'day', 'days']:
+            return 365 / number
+    else:
+        # Fallback mapping for standard names
+        mapping = {
+            'seconds': 31536000,
+            'minute': 525600,
+            'hourly': 8760,
+            'daily': 365,
+            'weekly': 52,
+            'monthly': 12,
+            'quarterly': 4,
+            'yearly': 1
+        }
+        return mapping.get(interval.lower(), 365)
 
 def calculate_metrics(df, interval, annualization_factor=None):
     """
-    Calculate performance metrics for an individual strategy (or for combined raw portfolio data)
-    based on the provided DataFrame containing 'pnl' and 'trade' columns.
-    Returns a dictionary with:
-      - num_of_trades
-      - total_returns
-      - annualized_avg_return
-      - max_drawdown
-      - sharpe_ratio
-      - trades_per_interval
-      - average_trade_return
-      - win_rate
-      - average_winning_trade
-      - average_losing_trade
-      - profit_factor
-      - cumulative_pnL (the equity curve)
+    Calculate performance metrics for an individual strategy or combined portfolio.
+    Uses the detected time interval (e.g. "2h", "10min", "1d") to determine the number
+    of periods per year for annualization.
     """
     periods_per_year = get_periods_per_year(interval)
     if annualization_factor is None:
@@ -197,6 +206,7 @@ def main():
                 else:
                     st.info(f"Using '{date_column}' column for time detection.")
                     detected_interval = detect_time_interval(strategy_trades, date_column) or 'daily'
+                    st.info(f"Detected interval: {detected_interval} — Periods per year: {get_periods_per_year(detected_interval)}")
                 
                 metrics = calculate_metrics(strategy_trades, detected_interval)
                 
@@ -279,6 +289,7 @@ def main():
                     portfolio_daily_trade = trade_df.sum(axis=1)
                     
                     portfolio_df = pd.DataFrame({"pnl": portfolio_daily_pnl, "trade": portfolio_daily_trade})
+                    # Since the portfolio data is resampled to daily, we use "daily" for annualization.
                     aggregated_metrics = calculate_metrics(portfolio_df, "daily")
                     
                     rolling_window = 180
@@ -335,7 +346,6 @@ def main():
                         cols[i % 3].metric(metric, val)
                         i += 1
                     
-                    # Export button: Export performance metrics as JSON.
                     metrics_json = json.dumps(formatted_metrics, indent=2)
                     st.download_button("Export Performance Metrics (JSON)", data=metrics_json, file_name="portfolio_metrics.json", mime="application/json")
                     
@@ -345,7 +355,6 @@ def main():
                     fig_port.update_layout(title="Cumulative Portfolio Profit Over Time", xaxis_title="Time", yaxis_title="Cumulative PnL")
                     st.plotly_chart(fig_port, use_container_width=True)
                     
-                    # Monthly Performance Table for Portfolio.
                     st.write("### Monthly Performance (%)")
                     monthly_portfolio_return = portfolio_daily_pnl.resample('ME').sum() * 100
                     monthly_portfolio_df = monthly_portfolio_return.to_frame(name='Return')
@@ -388,7 +397,6 @@ def main():
                     pnl_df = pd.concat(daily_series_list, axis=1)
                     pnl_df = pnl_df.fillna(0)
                     corr_matrix = pnl_df.corr()
-                    # Custom diverging color scale: -1 = red, 0 = white, +1 = dark blue.
                     custom_color_scale = [(0, "red"), (0.5, "white"), (1, "darkblue")]
                     fig_corr = px.imshow(
                         corr_matrix,
@@ -399,11 +407,9 @@ def main():
                         zmin=-1,
                         zmax=1
                     )
-                    # Rotate x-axis labels vertically.
                     fig_corr.update_xaxes(tickangle=90)
                     st.plotly_chart(fig_corr, use_container_width=True)
                     
-                    # Diversified Portfolio Optimization
                     st.write("### Diversified Portfolio Optimization")
                     threshold = st.slider("Set correlation threshold", min_value=0.0, max_value=1.0, value=0.65, step=0.01)
                     if st.button("Run Portfolio Optimization"):

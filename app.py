@@ -4,53 +4,34 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-import json  # For exporting JSON data
+import json  
 
-# Set page config: full screen (wide) layout and collapsed sidebar.
 st.set_page_config(page_title="MMM Portfolio", initial_sidebar_state="collapsed", layout="wide")
 
-# --- Helper Functions ---
-
 def to_percentage(val):
-    """Format a float value as a percentage string."""
+    """Format a float value as a raw number string without a percentage symbol."""
     try:
-        return f"{val * 100:.2f}%"
+        return f"{val:.2f}"
     except Exception:
         return "N/A"
 
 def detect_time_interval(df, time_col):
-    """
-    Detect the actual interval between timestamps and return a string like "5min", "2h", or "1d".
-    """
     df[time_col] = pd.to_datetime(df[time_col])
     df = df.sort_values(time_col)
     time_diffs = df[time_col].diff().dropna()
     if time_diffs.empty:
         return None
     median_diff = time_diffs.median().total_seconds()
-    # Calculate minutes (rounded)
     minutes = round(median_diff / 60)
     if minutes < 60:
         return f"{minutes}min"
-    # Calculate hours (rounded)
     hours = round(minutes / 60)
     if hours < 24:
         return f"{hours}h"
-    # Otherwise, return days
     days = round(hours / 24)
     return f"{days}d"
 
 def get_periods_per_year(interval):
-    """
-    Return the number of periods per year for a given interval.
-    Supports custom intervals such as "2h", "10min", "1d", etc.
-    
-    The function uses a regex to extract a numeric value and a unit.
-    For example:
-      - "2h"   -> 8760 / 2 = 4380 periods per year,
-      - "10min"-> 525600 / 10 = 52560 periods per year,
-      - "1d"   -> 365 / 1 = 365 periods per year.
-    """
     m = re.match(r"(\d+)\s*(s|sec|second|seconds|m|min|minute|minutes|h|hr|hour|hours|d|day|days)", interval, re.IGNORECASE)
     if m:
         number, unit = m.groups()
@@ -65,7 +46,6 @@ def get_periods_per_year(interval):
         elif unit in ['d', 'day', 'days']:
             return 365 / number
     else:
-        # Fallback mapping for standard names
         mapping = {
             'seconds': 31536000,
             'minute': 525600,
@@ -79,11 +59,6 @@ def get_periods_per_year(interval):
         return mapping.get(interval.lower(), 365)
 
 def calculate_metrics(df, interval, annualization_factor=None):
-    """
-    Calculate performance metrics for an individual strategy or combined portfolio.
-    Uses the detected time interval (e.g. "2h", "10min", "1d") to determine the number
-    of periods per year for annualization.
-    """
     periods_per_year = get_periods_per_year(interval)
     if annualization_factor is None:
         annualization_factor = np.sqrt(periods_per_year)
@@ -127,16 +102,14 @@ def calculate_metrics(df, interval, annualization_factor=None):
         "average_winning_trade": average_winning_trade,
         "average_losing_trade": average_losing_trade,
         "profit_factor": profit_factor,
-        "cumulative_pnL": cumulative_pnl  # For the equity curve.
+        "cumulative_pnL": cumulative_pnl  
     }
 
 @st.cache_data
 def load_csv(uploaded_file):
-    """Cache the loading of CSV files to help optimize performance."""
     return pd.read_csv(uploaded_file)
 
 def color_negative_positive(val):
-    """Return a CSS style with green text for non-negative values and red for negative values."""
     try:
         color = 'red' if val < 0 else 'green'
         return f'color: {color}'
@@ -144,10 +117,6 @@ def color_negative_positive(val):
         return ''
 
 def select_diversified_strategies(corr_matrix, threshold=0.65):
-    """
-    Greedily remove strategies until no pair of remaining strategies has a correlation exceeding the threshold.
-    Returns the list of selected strategies.
-    """
     strategies = list(corr_matrix.index)
     while True:
         high_corr_pairs = [
@@ -164,12 +133,9 @@ def select_diversified_strategies(corr_matrix, threshold=0.65):
         strategies.remove(worst_strategy)
     return strategies
 
-# --- Main App Function ---
-
 def main():
     st.title("MMM Portfolio")
     
-    # Sidebar: File uploader only.
     uploaded_files = st.sidebar.file_uploader("Upload your CSV files", type=["csv"], accept_multiple_files=True)
     
     strategies = {}
@@ -188,8 +154,6 @@ def main():
         st.info("Please upload one or more CSV files from the sidebar.")
     else:
         all_strategy_names = list(strategies.keys())
-        
-        # Create horizontal tabs: Individual Strategy, Portfolio, and Correlation.
         tab1, tab2, tab3 = st.tabs(["Individual Strategy", "Portfolio", "Correlation"])
         
         # --- Individual Strategy Tab ---
@@ -233,7 +197,6 @@ def main():
                     cols[i % 3].metric(metric.replace("_", " ").title(), val)
                     i += 1
                 
-                # Equity Curve for the individual strategy using Plotly.
                 if date_column:
                     strategy_trades[date_column] = pd.to_datetime(strategy_trades[date_column])
                     strategy_trades = strategy_trades.sort_values(date_column)
@@ -245,20 +208,19 @@ def main():
                 else:
                     st.line_chart(strategy_trades['pnl'].cumsum())
                 
-                # Monthly Performance Table for Individual Strategy.
                 if date_column:
-                    st.write("### Monthly Performance (%)")
-                    monthly_return = strategy_trades.set_index(pd.to_datetime(strategy_trades[date_column]))['pnl'].resample('ME').sum() * 100
+                    st.write("### Monthly Performance")
+                    monthly_return = strategy_trades.set_index(pd.to_datetime(strategy_trades[date_column]))['pnl'].resample('ME').sum()
                     monthly_return_df = monthly_return.to_frame(name='Return')
                     monthly_return_df['Year'] = monthly_return_df.index.year
                     monthly_return_df['Month'] = monthly_return_df.index.strftime('%b')
                     pivot_table = monthly_return_df.pivot(index='Year', columns='Month', values='Return')
                     month_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
                     pivot_table = pivot_table.reindex(columns=month_order)
-                    ytd_series = strategy_trades.set_index(pd.to_datetime(strategy_trades[date_column]))['pnl'].resample('YE').sum() * 100
+                    ytd_series = strategy_trades.set_index(pd.to_datetime(strategy_trades[date_column]))['pnl'].resample('YE').sum()
                     ytd_series.index = ytd_series.index.year
                     pivot_table["YTD"] = ytd_series
-                    styled_table = pivot_table.style.format("{:.2f}%").map(color_negative_positive)
+                    styled_table = pivot_table.style.format("{:.2f}").map(color_negative_positive)
                     st.dataframe(styled_table, use_container_width=True)
         
         # --- Portfolio Tab ---
@@ -289,7 +251,6 @@ def main():
                     portfolio_daily_trade = trade_df.sum(axis=1)
                     
                     portfolio_df = pd.DataFrame({"pnl": portfolio_daily_pnl, "trade": portfolio_daily_trade})
-                    # Since the portfolio data is resampled to daily, we use "daily" for annualization.
                     aggregated_metrics = calculate_metrics(portfolio_df, "daily")
                     
                     rolling_window = 180
@@ -355,18 +316,18 @@ def main():
                     fig_port.update_layout(title="Cumulative Portfolio Profit Over Time", xaxis_title="Time", yaxis_title="Cumulative PnL")
                     st.plotly_chart(fig_port, use_container_width=True)
                     
-                    st.write("### Monthly Performance (%)")
-                    monthly_portfolio_return = portfolio_daily_pnl.resample('ME').sum() * 100
+                    st.write("### Monthly Performance")
+                    monthly_portfolio_return = portfolio_daily_pnl.resample('ME').sum()
                     monthly_portfolio_df = monthly_portfolio_return.to_frame(name='Return')
                     monthly_portfolio_df['Year'] = monthly_portfolio_df.index.year
                     monthly_portfolio_df['Month'] = monthly_portfolio_df.index.strftime('%b')
                     pivot_table_portfolio = monthly_portfolio_df.pivot(index='Year', columns='Month', values='Return')
                     month_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
                     pivot_table_portfolio = pivot_table_portfolio.reindex(columns=month_order)
-                    ytd_series_portfolio = portfolio_daily_pnl.resample('YE').sum() * 100
+                    ytd_series_portfolio = portfolio_daily_pnl.resample('YE').sum()
                     ytd_series_portfolio.index = ytd_series_portfolio.index.year
                     pivot_table_portfolio["YTD"] = ytd_series_portfolio
-                    styled_table_portfolio = pivot_table_portfolio.style.format("{:.2f}%").map(color_negative_positive)
+                    styled_table_portfolio = pivot_table_portfolio.style.format("{:.2f}").map(color_negative_positive)
                     st.dataframe(styled_table_portfolio, use_container_width=True)
             else:
                 st.info("Select at least one strategy to view portfolio performance.")

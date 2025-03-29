@@ -4,7 +4,8 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-import json  
+import json
+import networkx as nx
 
 st.set_page_config(page_title="MMM Portfolio", initial_sidebar_state="collapsed", layout="wide")
 
@@ -116,22 +117,88 @@ def color_negative_positive(val):
     except Exception:
         return ''
 
-def select_diversified_strategies(corr_matrix, threshold=0.65):
+def select_diversified_strategies_graph(corr_matrix, threshold=0.65):
+    """
+    Build a graph where each node is a strategy.
+    Add an edge between two strategies if their correlation exceeds the threshold.
+    Then, return an approximate maximum independent set.
+    """
     strategies = list(corr_matrix.index)
-    while True:
-        high_corr_pairs = [
-            (i, j) for i in strategies for j in strategies 
-            if i != j and corr_matrix.loc[i, j] > threshold
-        ]
-        if not high_corr_pairs:
-            break
-        count = {strategy: 0 for strategy in strategies}
-        for i, j in high_corr_pairs:
-            count[i] += 1
-            count[j] += 1
-        worst_strategy = max(count, key=count.get)
-        strategies.remove(worst_strategy)
-    return strategies
+    G = nx.Graph()
+    G.add_nodes_from(strategies)
+    
+    # Add edges for high correlations
+    for i in strategies:
+        for j in strategies:
+            if i != j and corr_matrix.loc[i, j] > threshold:
+                G.add_edge(i, j)
+    
+    # Approximate maximum independent set: strategies that are not connected by high correlation.
+    independent_set = nx.algorithms.approximation.maximum_independent_set(G)
+    return list(independent_set), G
+
+def visualize_network(G, independent_set):
+    """
+    Create a Plotly visualization of the network graph.
+    Nodes in the independent_set are colored green and the eliminated ones are red.
+    """
+    pos = nx.spring_layout(G, seed=42)  # fixed seed for consistency
+    # Extract edge coordinates
+    edge_x = []
+    edge_y = []
+    for edge in G.edges():
+        x0, y0 = pos[edge[0]]
+        x1, y1 = pos[edge[1]]
+        edge_x.extend([x0, x1, None])
+        edge_y.extend([y0, y1, None])
+    
+    edge_trace = go.Scatter(
+        x=edge_x, y=edge_y,
+        line=dict(width=1, color='#888'),
+        hoverinfo='none',
+        mode='lines'
+    )
+    
+    # Node coordinates and styling
+    node_x = []
+    node_y = []
+    node_color = []
+    node_text = []
+    for node in G.nodes():
+        x, y = pos[node]
+        node_x.append(x)
+        node_y.append(y)
+        if node in independent_set:
+            node_color.append('green')
+        else:
+            node_color.append('red')
+        node_text.append(node)
+    
+    node_trace = go.Scatter(
+        x=node_x, y=node_y,
+        mode='markers+text',
+        text=node_text,
+        textposition="top center",
+        marker=dict(
+            showscale=False,
+            color=node_color,
+            size=20,
+            line_width=2
+        ),
+        hoverinfo='text'
+    )
+    
+    fig = go.Figure(data=[edge_trace, node_trace],
+                    layout=go.Layout(
+                        title="Network Graph of Strategy Correlations",
+                        title_x=0.5,
+                        showlegend=False,
+                        hovermode='closest',
+                        margin=dict(b=20,l=5,r=5,t=40),
+                        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)
+                    ))
+    return fig
 
 def main():
     st.title("MMM Portfolio")
@@ -371,10 +438,10 @@ def main():
                     fig_corr.update_xaxes(tickangle=90)
                     st.plotly_chart(fig_corr, use_container_width=True)
                     
-                    st.write("### Diversified Portfolio Optimization")
+                    st.write("### Diversified Portfolio Optimization (Graph-based)")
                     threshold = st.slider("Set correlation threshold", min_value=0.0, max_value=1.0, value=0.65, step=0.01)
                     if st.button("Run Portfolio Optimization"):
-                        selected_strategies = select_diversified_strategies(corr_matrix, threshold)
+                        selected_strategies, G = select_diversified_strategies_graph(corr_matrix, threshold)
                         eliminated = [s for s in corr_matrix.index if s not in selected_strategies]
                         st.write(f"**Selected Strategies (total: {len(selected_strategies)}):** {selected_strategies}")
                         st.write(f"**Eliminated Strategies:** {eliminated}")
@@ -392,6 +459,10 @@ def main():
                             )
                             fig_div.update_xaxes(tickangle=90)
                             st.plotly_chart(fig_div, use_container_width=True)
+                        
+                        # Visualize the underlying network graph
+                        fig_network = visualize_network(G, selected_strategies)
+                        st.plotly_chart(fig_network, use_container_width=True)
 
 if __name__ == "__main__":
     main()

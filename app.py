@@ -10,6 +10,7 @@ import networkx as nx
 st.set_page_config(page_title="MMM Portfolio", initial_sidebar_state="collapsed", layout="wide")
 
 def to_percentage(val):
+    """Format a float value as a raw number string without a percentage symbol."""
     try:
         return f"{val:.2f}"
     except Exception:
@@ -117,18 +118,32 @@ def color_negative_positive(val):
         return ''
 
 def select_diversified_strategies_graph(corr_matrix, threshold=0.65):
+    """
+    Build a graph where each node is a strategy.
+    Add an edge between two strategies if their correlation exceeds the threshold.
+    Then, return an approximate maximum independent set.
+    """
     strategies = list(corr_matrix.index)
     G = nx.Graph()
     G.add_nodes_from(strategies)
+    
+    # Add edges for high correlations
     for i in strategies:
         for j in strategies:
             if i != j and corr_matrix.loc[i, j] > threshold:
                 G.add_edge(i, j)
+    
+    # Approximate maximum independent set: strategies that are not connected by high correlation.
     independent_set = nx.algorithms.approximation.maximum_independent_set(G)
     return list(independent_set), G
 
 def visualize_network(G, independent_set):
-    pos = nx.spring_layout(G, seed=42)
+    """
+    Create a Plotly visualization of the network graph.
+    Nodes in the independent_set are colored green and the eliminated ones are red.
+    """
+    pos = nx.spring_layout(G, seed=42)  # fixed seed for consistency
+    # Extract edge coordinates
     edge_x = []
     edge_y = []
     for edge in G.edges():
@@ -144,6 +159,7 @@ def visualize_network(G, independent_set):
         mode='lines'
     )
     
+    # Node coordinates and styling
     node_x = []
     node_y = []
     node_color = []
@@ -152,7 +168,10 @@ def visualize_network(G, independent_set):
         x, y = pos[node]
         node_x.append(x)
         node_y.append(y)
-        node_color.append('green' if node in independent_set else 'red')
+        if node in independent_set:
+            node_color.append('green')
+        else:
+            node_color.append('red')
         node_text.append(node)
     
     node_trace = go.Scatter(
@@ -175,7 +194,7 @@ def visualize_network(G, independent_set):
                         title_x=0.5,
                         showlegend=False,
                         hovermode='closest',
-                        margin=dict(b=20, l=5, r=5, t=40),
+                        margin=dict(b=20,l=5,r=5,t=40),
                         xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
                         yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)
                     ))
@@ -184,18 +203,8 @@ def visualize_network(G, independent_set):
 def main():
     st.title("MMM Portfolio")
     
-    # Persist uploaded files in session state
-    if "uploaded_files" not in st.session_state:
-        st.session_state.uploaded_files = []
-        
-    new_files = st.sidebar.file_uploader("Upload your CSV files", type=["csv"], accept_multiple_files=True, key="file_uploader")
-    if new_files:
-        # Append only new files (avoid duplicates)
-        for f in new_files:
-            if f.name not in [uf.name for uf in st.session_state.uploaded_files]:
-                st.session_state.uploaded_files.append(f)
-    uploaded_files = st.session_state.uploaded_files
-
+    uploaded_files = st.sidebar.file_uploader("Upload your CSV files", type=["csv"], accept_multiple_files=True)
+    
     strategies = {}
     if uploaded_files:
         for uploaded_file in uploaded_files:
@@ -217,16 +226,7 @@ def main():
         # --- Individual Strategy Tab ---
         with tab1:
             st.header("📊 Individual Strategy Performance")
-            # Persist the individual strategy selection inside the tab
-            if "selected_strategy" not in st.session_state or st.session_state.selected_strategy not in (["None"] + all_strategy_names):
-                st.session_state.selected_strategy = "None"
-            strategy_options = ["None"] + all_strategy_names
-            selected_strategy = st.selectbox(
-                "Select a strategy to view its performance:", 
-                options=strategy_options, 
-                index=strategy_options.index(st.session_state.selected_strategy),
-                key="selected_strategy"
-            )
+            selected_strategy = st.selectbox("Select a strategy to view its performance:", options=["None"] + all_strategy_names)
             if selected_strategy != "None":
                 strategy_trades = strategies[selected_strategy]
                 candidate_columns = ['Entry Date', 'Exit Date', 'Trade Date', 'Date/Time', 'timestamp', 'datetime', 'date']
@@ -293,15 +293,7 @@ def main():
         # --- Portfolio Tab ---
         with tab2:
             st.header("📊 Portfolio Performance")
-            if "selected_portfolio" not in st.session_state:
-                st.session_state.selected_portfolio = []
-            persisted_portfolio = [s for s in st.session_state.selected_portfolio if s in all_strategy_names]
-            selected_portfolio = st.multiselect(
-                "Select strategies to include in the portfolio:", 
-                options=all_strategy_names, 
-                default=persisted_portfolio,
-                key="selected_portfolio"
-            )
+            selected_portfolio = st.multiselect("Select strategies to include in the portfolio:", options=all_strategy_names)
             if selected_portfolio:
                 candidate_columns = ['Entry Date', 'Exit Date', 'Trade Date', 'Date/Time', 'timestamp', 'datetime', 'date']
                 daily_pnl_list = []
@@ -410,15 +402,7 @@ def main():
         # --- Correlation Tab ---
         with tab3:
             st.header("📊 Strategy Correlation")
-            if "selected_corr" not in st.session_state:
-                st.session_state.selected_corr = []
-            persisted_corr = [s for s in st.session_state.selected_corr if s in all_strategy_names]
-            selected_corr = st.multiselect(
-                "Select strategies for correlation analysis:", 
-                options=all_strategy_names, 
-                default=persisted_corr,
-                key="selected_corr"
-            )
+            selected_corr = st.multiselect("Select strategies for correlation analysis:", options=all_strategy_names)
             if len(selected_corr) < 2:
                 st.info("Please select at least two strategies to view correlation.")
             else:
@@ -476,6 +460,7 @@ def main():
                             fig_div.update_xaxes(tickangle=90)
                             st.plotly_chart(fig_div, use_container_width=True)
                         
+                        # Visualize the underlying network graph
                         fig_network = visualize_network(G, selected_strategies)
                         st.plotly_chart(fig_network, use_container_width=True)
 

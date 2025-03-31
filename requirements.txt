@@ -1,3 +1,4 @@
 plotly
 kaleido
 networkx 
+streamlit-aggrid

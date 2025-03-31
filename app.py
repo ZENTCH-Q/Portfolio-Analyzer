@@ -6,6 +6,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import json
 import networkx as nx
+from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 
 st.set_page_config(page_title="MMM Portfolio", initial_sidebar_state="collapsed", layout="wide")
 
@@ -221,6 +222,102 @@ def main():
         st.info("Please upload one or more CSV files from the sidebar.")
     else:
         all_strategy_names = list(strategies.keys())
+        
+        # --- Files Metrics Display (outside tabs) ---
+        st.subheader("📄 Files Metrics Overview")
+        # Build the metrics list with exactly 27 columns as required.
+        metrics_records = []
+        # The required columns (in order) are:
+        # alpha_id, custom_id, alpha_formula, manual_alpha_formula, data_preprocessing, preprocessing_window, model,
+        # entry_exit_logic, data_asset, trade_asset, Alpha Details & Logic, alpha remarks, backtested_period, timeframe,
+        # rolling_window_1, rolling_window_2, long_entry_threshold, long_exit_threshold, short_entry_threshold, short_exit_threshold,
+        # SR, CR, MDD, AR, trade_numbers, datasource_structure, shift_backtest_candle_minute
+        candidate_columns = ['Entry Date', 'Exit Date', 'Trade Date', 'Date/Time', 'timestamp', 'datetime', 'date']
+        for file_name, df in strategies.items():
+            date_column = next((col for col in df.columns if col in candidate_columns), None)
+            if date_column:
+                detected_interval = detect_time_interval(df, date_column) or 'daily'
+            else:
+                detected_interval = 'daily'
+            metrics = calculate_metrics(df, detected_interval)
+            sharpe_ratio = metrics["sharpe_ratio"]
+            annualized_avg_return = metrics["annualized_avg_return"]
+            max_drawdown = metrics["max_drawdown"]
+            num_of_trades = metrics["num_of_trades"]
+            # Compute Calmar Ratio (CR): Annualized Avg Return / |Max Drawdown| (avoid division by zero)
+            if max_drawdown != 0:
+                calmar_ratio = annualized_avg_return / abs(max_drawdown)
+            else:
+                calmar_ratio = np.nan
+            record = {
+                "custom_id": file_name,
+                "alpha_formula": "",
+                "manual_alpha_formula": "",
+                "data_preprocessing": "",
+                "preprocessing_window": "",
+                "model": "",
+                "entry_exit_logic": "",
+                "data_asset": "",
+                "trade_asset": "",
+                "Alpha Details & Logic": "",
+                "alpha remarks": "",
+                "backtested_period": "",
+                "timeframe": detected_interval,
+                "rolling_window_1": "",
+                "rolling_window_2": "",
+                "long_entry_threshold": "",
+                "long_exit_threshold": "",
+                "short_entry_threshold": "",
+                "short_exit_threshold": "",
+                "SR": f"{sharpe_ratio:.2f}",
+                "CR": f"{calmar_ratio:.2f}" if not np.isnan(calmar_ratio) else "N/A",
+                "MDD": to_percentage(max_drawdown),
+                "AR": to_percentage(annualized_avg_return),
+                "trade_numbers": num_of_trades,
+                "datasource_structure": "",
+                "shift_backtest_candle_minute": ""
+            }
+            metrics_records.append(record)
+        # Create DataFrame from records
+        metrics_df = pd.DataFrame(metrics_records)
+        # Reset index starting at 1 and create the alpha_id column.
+        metrics_df.index = np.arange(1, len(metrics_df) + 1)
+        alpha_ids = ["TURTLE999_{:04d}".format(i) for i in range(1, len(metrics_df) + 1)]
+        metrics_df.insert(0, "alpha_id", alpha_ids)
+        # Reorder columns to match the exact order required:
+        desired_columns = [
+            "alpha_id", "custom_id", "alpha_formula", "manual_alpha_formula", "data_preprocessing",
+            "preprocessing_window", "model", "entry_exit_logic", "data_asset", "trade_asset",
+            "Alpha Details & Logic", "alpha remarks", "backtested_period", "timeframe",
+            "rolling_window_1", "rolling_window_2", "long_entry_threshold", "long_exit_threshold",
+            "short_entry_threshold", "short_exit_threshold", "SR", "CR", "MDD", "AR", "trade_numbers",
+            "datasource_structure", "shift_backtest_candle_minute"
+        ]
+        metrics_df = metrics_df[desired_columns]
+        
+        # Build grid options using st_aggrid with auto-size columns and a default minimum width
+        gb = GridOptionsBuilder.from_dataframe(metrics_df)
+        gb.configure_default_column(editable=True, resizable=True, minWidth=150)
+        gb.configure_selection("single", use_checkbox=False)
+        gb.configure_grid_options(
+            onGridReady="""
+            function(params) {
+                var allColumnIds = params.columnApi.getAllColumns().map(function(col) { return col.colId; });
+                params.columnApi.autoSizeColumns(allColumnIds, false);
+            }
+            """
+        )
+        gridOptions = gb.build()
+        
+        ag_response = AgGrid(
+            metrics_df,
+            gridOptions=gridOptions,
+            update_mode=GridUpdateMode.VALUE_CHANGED,
+            height=300,
+            fit_columns_on_grid_load=True,
+        )
+        
+        # --- Main Tabs ---
         tab1, tab2, tab3 = st.tabs(["Individual Strategy", "Portfolio", "Correlation"])
         
         # --- Individual Strategy Tab ---
@@ -402,7 +499,23 @@ def main():
         # --- Correlation Tab ---
         with tab3:
             st.header("📊 Strategy Correlation")
-            selected_corr = st.multiselect("Select strategies for correlation analysis:", options=all_strategy_names)
+            
+            # Multi-select for strategies (pre-select all if desired)
+            select_all_corr = st.checkbox("Select All Strategies for Correlation", key="select_all_corr")
+            if select_all_corr:
+                selected_corr = st.multiselect(
+                    "Select strategies for correlation analysis:", 
+                    options=all_strategy_names, 
+                    default=all_strategy_names,
+                    key="selected_corr"
+                )
+            else:
+                selected_corr = st.multiselect(
+                    "Select strategies for correlation analysis:", 
+                    options=all_strategy_names,
+                    key="selected_corr"
+                )
+                
             if len(selected_corr) < 2:
                 st.info("Please select at least two strategies to view correlation.")
             else:
@@ -439,10 +552,25 @@ def main():
                     st.plotly_chart(fig_corr, use_container_width=True)
                     
                     st.write("### Diversified Portfolio Optimization (Graph-based)")
-                    threshold = st.slider("Set correlation threshold", min_value=0.0, max_value=1.0, value=0.65, step=0.01)
-                    if st.button("Run Portfolio Optimization"):
+                    threshold = st.slider("Set correlation threshold", min_value=0.0, max_value=1.0, value=0.65, step=0.01, key="opt_threshold")
+                    
+                    # Run optimization once and store the result in session_state
+                    if st.button("Run Portfolio Optimization", key="run_opt_button"):
                         selected_strategies, G = select_diversified_strategies_graph(corr_matrix, threshold)
                         eliminated = [s for s in corr_matrix.index if s not in selected_strategies]
+                        st.session_state.optimization_result = {
+                            "selected_strategies": selected_strategies,
+                            "eliminated": eliminated,
+                            "G": G,
+                        }
+                    
+                    # If optimization has been run, display the stored results.
+                    if "optimization_result" in st.session_state:
+                        opt_result = st.session_state.optimization_result
+                        selected_strategies = opt_result["selected_strategies"]
+                        eliminated = opt_result["eliminated"]
+                        G = opt_result["G"]
+                        
                         st.write(f"**Selected Strategies (total: {len(selected_strategies)}):** {selected_strategies}")
                         st.write(f"**Eliminated Strategies:** {eliminated}")
                         
@@ -460,9 +588,34 @@ def main():
                             fig_div.update_xaxes(tickangle=90)
                             st.plotly_chart(fig_div, use_container_width=True)
                         
-                        # Visualize the underlying network graph
                         fig_network = visualize_network(G, selected_strategies)
                         st.plotly_chart(fig_network, use_container_width=True)
+                        
+                        # --- Metrics Table with Toggle ---
+                        st.write("### Strategy Metrics")
+                        # Filter metrics_df by the selected correlation strategies.
+                        table_df = metrics_df.loc[
+                            metrics_df["custom_id"].isin(selected_corr), 
+                            ["custom_id", "SR", "CR", "MDD", "AR", "trade_numbers"]
+                        ].copy()
+                        table_df.rename(columns={"custom_id": "File Name", "trade_numbers": "Trades"}, inplace=True)
+                        
+                        # Checkbox to toggle display of eliminated strategies.
+                        show_eliminated = st.checkbox("Show Eliminated Strategies", value=True, key="show_eliminated")
+                        
+                        # If unchecked, filter out eliminated rows.
+                        if not show_eliminated:
+                            table_df = table_df[~table_df["File Name"].isin(eliminated)]
+                        
+                        # Highlight eliminated strategies (if shown)
+                        def highlight_row(row):
+                            if row["File Name"] in eliminated:
+                                return ['background-color: #ff9999'] * len(row)
+                            else:
+                                return [''] * len(row)
+                        
+                        styled_table = table_df.style.apply(highlight_row, axis=1)
+                        st.dataframe(styled_table, use_container_width=True)
 
 if __name__ == "__main__":
     main()

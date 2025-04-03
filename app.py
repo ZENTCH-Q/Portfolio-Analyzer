@@ -108,6 +108,20 @@ def calculate_metrics(df, interval, annualization_factor=None):
         "cumulative_pnL": cumulative_pnl  
     }
 
+def check_nan_rows(df, threshold=0.03):
+    """
+    Check if the percentage of rows with any NaN values exceeds the threshold.
+    Returns a tuple (exceeds_threshold, ratio) where:
+      - exceeds_threshold: True if missing rows percentage > threshold.
+      - ratio: the fraction of rows with NaN values.
+    """
+    total_rows = len(df)
+    if total_rows == 0:
+        return False, 0.0
+    nan_rows = df.isna().any(axis=1).sum()
+    ratio = nan_rows / total_rows
+    return ratio > threshold, ratio
+
 @st.cache_data
 def load_csv(uploaded_file):
     return pd.read_csv(uploaded_file)
@@ -268,6 +282,13 @@ def main():
             uploaded_file.seek(0)
             try:
                 df = load_csv(uploaded_file)
+                
+                # Check for NaN rows exceeding the 3% threshold.
+                exceeds_nan, nan_ratio = check_nan_rows(df, threshold=0.03)
+                if exceeds_nan:
+                    st.error(f"File {uploaded_file.name} has {nan_ratio*100:.2f}% missing rows, which exceeds the 3% threshold. This file will be skipped.")
+                    continue
+                
                 if 'pnl' not in df.columns or 'trade' not in df.columns:
                     st.error(f"File {uploaded_file.name} does not contain required 'pnl' and 'trade' columns.")
                     continue

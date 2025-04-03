@@ -1,4 +1,5 @@
 import re
+import os
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -195,20 +196,60 @@ def visualize_network(G, independent_set):
                         title_x=0.5,
                         showlegend=False,
                         hovermode='closest',
-                        margin=dict(b=20,l=5,r=5,t=40),
+                        margin=dict(b=20, l=5, r=5, t=40),
                         xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
                         yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)
                     ))
     return fig
 
+# Helper function to save the uploaded file to a local folder.
+def save_uploaded_file(uploaded_file):
+    folder = "alpha"
+    if not os.path.exists(folder):
+        os.makedirs(folder)
+    file_path = os.path.join(folder, uploaded_file.name)
+    with open(file_path, "wb") as f:
+        f.write(uploaded_file.getbuffer())
+    return file_path
+
 def main():
     st.title("MMM Portfolio")
     
+    # Ensure the 'alpha' folder exists for saving uploaded CSV files.
+    if not os.path.exists("alpha"):
+        os.makedirs("alpha")
+        
+    # Define the desired columns for the metrics table.
+    desired_columns = [
+        "alpha_id", "custom_id", "alpha_formula", "manual_alpha_formula", "data_preprocessing",
+        "preprocessing_window", "model", "entry_exit_logic", "data_asset", "trade_asset", "transformation",
+        "Alpha Details & Logic", "alpha remarks", "backtested_period", "timeframe",
+        "rolling_window_1", "rolling_window_2", "long_entry_threshold", "long_exit_threshold", 
+        "short_entry_threshold", "short_exit_threshold", "SR", "CR", "MDD", "AR", "trade_numbers",
+        "datasource_structure", "shift_backtest_candle_minute"
+    ]
+    
+    # Load previously saved metrics from CSV, if available, from the current directory.
+    metrics_file_path = "metrics.csv"
+    if os.path.exists(metrics_file_path):
+        saved_metrics_df = pd.read_csv(metrics_file_path)
+    else:
+        saved_metrics_df = pd.DataFrame(columns=desired_columns)
+    
+    # Allow multiple CSV file uploads.
     uploaded_files = st.sidebar.file_uploader("Upload your CSV files", type=["csv"], accept_multiple_files=True)
     
     strategies = {}
+    new_metrics_records = []
+    # Candidate columns to detect dates.
+    candidate_columns = ['Entry Date', 'Exit Date', 'Trade Date', 'Date/Time', 'timestamp', 'datetime', 'date']
+    
     if uploaded_files:
         for uploaded_file in uploaded_files:
+            # Save the uploaded file to the 'alpha' folder.
+            save_uploaded_file(uploaded_file)
+            # Reset the file pointer before reading.
+            uploaded_file.seek(0)
             try:
                 df = load_csv(uploaded_file)
                 if 'pnl' not in df.columns or 'trade' not in df.columns:
@@ -217,34 +258,25 @@ def main():
                 strategies[uploaded_file.name] = df
             except Exception as e:
                 st.error(f"Error processing file {uploaded_file.name}: {e}")
-    
-    if not strategies:
-        st.info("Please upload one or more CSV files from the sidebar.")
-    else:
-        all_strategy_names = list(strategies.keys())
         
-        # --- Files Metrics Display (outside tabs) ---
-        st.subheader("📄 Files Metrics Overview")
-        # Build the metrics list with exactly 27 columns as required.
-        metrics_records = []
-        # The required columns (in order) are:
-        # alpha_id, custom_id, alpha_formula, manual_alpha_formula, data_preprocessing, preprocessing_window, model,
-        # entry_exit_logic, data_asset, trade_asset, Alpha Details & Logic, alpha remarks, backtested_period, timeframe,
-        # rolling_window_1, rolling_window_2, long_entry_threshold, long_exit_threshold, short_entry_threshold, short_exit_threshold,
-        # SR, CR, MDD, AR, trade_numbers, datasource_structure, shift_backtest_candle_minute
-        candidate_columns = ['Entry Date', 'Exit Date', 'Trade Date', 'Date/Time', 'timestamp', 'datetime', 'date']
+        # Compute metrics for each uploaded file.
         for file_name, df in strategies.items():
             date_column = next((col for col in df.columns if col in candidate_columns), None)
             if date_column:
+                # Detect time interval and calculate backtested period.
                 detected_interval = detect_time_interval(df, date_column) or 'daily'
+                df[date_column] = pd.to_datetime(df[date_column])
+                start_date = df[date_column].min()
+                end_date = df[date_column].max()
+                backtested_period = f"{start_date.strftime('%Y-%m-%d')} - {end_date.strftime('%Y-%m-%d')}"
             else:
                 detected_interval = 'daily'
+                backtested_period = ""
             metrics = calculate_metrics(df, detected_interval)
             sharpe_ratio = metrics["sharpe_ratio"]
             annualized_avg_return = metrics["annualized_avg_return"]
             max_drawdown = metrics["max_drawdown"]
             num_of_trades = metrics["num_of_trades"]
-            # Compute Calmar Ratio (CR): Annualized Avg Return / |Max Drawdown| (avoid division by zero)
             if max_drawdown != 0:
                 calmar_ratio = annualized_avg_return / abs(max_drawdown)
             else:
@@ -259,9 +291,10 @@ def main():
                 "entry_exit_logic": "",
                 "data_asset": "",
                 "trade_asset": "",
+                "transformation": "",  # Empty default for transformation column.
                 "Alpha Details & Logic": "",
                 "alpha remarks": "",
-                "backtested_period": "",
+                "backtested_period": backtested_period,
                 "timeframe": detected_interval,
                 "rolling_window_1": "",
                 "rolling_window_2": "",
@@ -277,345 +310,348 @@ def main():
                 "datasource_structure": "",
                 "shift_backtest_candle_minute": ""
             }
-            metrics_records.append(record)
-        # Create DataFrame from records
-        metrics_df = pd.DataFrame(metrics_records)
-        # Reset index starting at 1 and create the alpha_id column.
-        metrics_df.index = np.arange(1, len(metrics_df) + 1)
-        alpha_ids = ["TURTLE999_{:04d}".format(i) for i in range(1, len(metrics_df) + 1)]
-        metrics_df.insert(0, "alpha_id", alpha_ids)
-        # Reorder columns to match the exact order required:
-        desired_columns = [
-            "alpha_id", "custom_id", "alpha_formula", "manual_alpha_formula", "data_preprocessing",
-            "preprocessing_window", "model", "entry_exit_logic", "data_asset", "trade_asset",
-            "Alpha Details & Logic", "alpha remarks", "backtested_period", "timeframe",
-            "rolling_window_1", "rolling_window_2", "long_entry_threshold", "long_exit_threshold",
-            "short_entry_threshold", "short_exit_threshold", "SR", "CR", "MDD", "AR", "trade_numbers",
-            "datasource_structure", "shift_backtest_candle_minute"
-        ]
-        metrics_df = metrics_df[desired_columns]
-        
-        # Build grid options using st_aggrid with auto-size columns and a default minimum width
-        gb = GridOptionsBuilder.from_dataframe(metrics_df)
-        gb.configure_default_column(editable=True, resizable=True, minWidth=150)
-        gb.configure_selection("single", use_checkbox=False)
-        gb.configure_grid_options(
-            onGridReady="""
-            function(params) {
-                var allColumnIds = params.columnApi.getAllColumns().map(function(col) { return col.colId; });
-                params.columnApi.autoSizeColumns(allColumnIds, false);
-            }
-            """
-        )
-        gridOptions = gb.build()
-        
-        ag_response = AgGrid(
-            metrics_df,
-            gridOptions=gridOptions,
-            update_mode=GridUpdateMode.VALUE_CHANGED,
-            height=300,
-            fit_columns_on_grid_load=True,
-        )
-        
-        # --- Main Tabs ---
-        tab1, tab2, tab3 = st.tabs(["Individual Strategy", "Portfolio", "Correlation"])
-        
-        # --- Individual Strategy Tab ---
-        with tab1:
-            st.header("📊 Individual Strategy Performance")
-            selected_strategy = st.selectbox("Select a strategy to view its performance:", options=["None"] + all_strategy_names)
-            if selected_strategy != "None":
-                strategy_trades = strategies[selected_strategy]
-                candidate_columns = ['Entry Date', 'Exit Date', 'Trade Date', 'Date/Time', 'timestamp', 'datetime', 'date']
-                date_column = next((col for col in strategy_trades.columns if col in candidate_columns), None)
-                if not date_column:
-                    st.warning("No date column found. Defaulting to index-based analysis with 'daily' interval.")
-                    detected_interval = 'daily'
+            new_metrics_records.append(record)
+    
+    # Merge new metrics with previously saved metrics using 'custom_id' as unique key.
+    if new_metrics_records:
+        new_metrics_df = pd.DataFrame(new_metrics_records)
+        combined_df = pd.concat([saved_metrics_df, new_metrics_df]).drop_duplicates(subset=['custom_id'], keep='last')
+    else:
+        combined_df = saved_metrics_df.copy()
+    
+    # Reset index and reassign alpha_ids.
+    combined_df.reset_index(drop=True, inplace=True)
+    if "alpha_id" in combined_df.columns:
+        combined_df.drop(columns=["alpha_id"], inplace=True)
+    alpha_ids = ["TURTLE999_{:04d}".format(i) for i in range(1, len(combined_df) + 1)]
+    combined_df.insert(0, "alpha_id", alpha_ids)
+    metrics_df = combined_df[desired_columns]
+    
+    # Display the Metrics Table using AgGrid.
+    st.subheader("📄 Files Metrics Overview")
+    gb = GridOptionsBuilder.from_dataframe(metrics_df)
+    gb.configure_default_column(editable=True, resizable=True, minWidth=150)
+    # Configure the data_asset and trade_asset columns as dropdowns with BTC and ETH options.
+    gb.configure_column("data_asset", cellEditor="agSelectCellEditor", cellEditorParams={"values": ["BTC", "ETH"]})
+    gb.configure_column("trade_asset", cellEditor="agSelectCellEditor", cellEditorParams={"values": ["BTC", "ETH"]})
+    # Configure the transformation column as a dropdown with the given options.
+    gb.configure_column("transformation", cellEditor="agSelectCellEditor", cellEditorParams={
+        "values": ["none", "log", "log10", "sqrt", "cbrt", "exp", "diff", "pct_change", "square"]
+    })
+    gb.configure_selection("single", use_checkbox=False)
+    gb.configure_grid_options(
+        onGridReady=""" 
+        function(params) {
+            var allColumnIds = params.columnApi.getAllColumns().map(function(col) { return col.colId; });
+            params.columnApi.autoSizeColumns(allColumnIds, false);
+        }
+        """
+    )
+    gridOptions = gb.build()
+    ag_response = AgGrid(
+        metrics_df,
+        gridOptions=gridOptions,
+        update_mode=GridUpdateMode.VALUE_CHANGED,
+        height=300,
+        fit_columns_on_grid_load=True,
+    )
+    
+    # Automatically save the updated metrics back to CSV.
+    updated_metrics = ag_response['data']
+    updated_df = pd.DataFrame(updated_metrics)
+    updated_df.to_csv(metrics_file_path, index=False)
+    st.info("Metrics automatically saved to metrics.csv.")
+    
+    # --- Main Tabs ---
+    tab1, tab2, tab3 = st.tabs(["Individual Strategy", "Portfolio", "Correlation"])
+    
+    # --- Individual Strategy Tab ---
+    with tab1:
+        st.header("📊 Individual Strategy Performance")
+        all_strategy_names = list(strategies.keys())
+        selected_strategy = st.selectbox("Select a strategy to view its performance:", options=["None"] + all_strategy_names)
+        if selected_strategy != "None":
+            strategy_trades = strategies[selected_strategy]
+            date_column = next((col for col in strategy_trades.columns if col in candidate_columns), None)
+            if not date_column:
+                st.warning("No date column found. Defaulting to index-based analysis with 'daily' interval.")
+                detected_interval = 'daily'
+            else:
+                st.info(f"Using '{date_column}' column for time detection.")
+                detected_interval = detect_time_interval(strategy_trades, date_column) or 'daily'
+                st.info(f"Detected interval: {detected_interval} — Periods per year: {get_periods_per_year(detected_interval)}")
+            
+            metrics = calculate_metrics(strategy_trades, detected_interval)
+            
+            st.write("### Performance Metrics")
+            display_metrics = {}
+            for key, value in metrics.items():
+                if key == "cumulative_pnL":
+                    continue
+                if key in ["total_returns", "annualized_avg_return", "max_drawdown", "trades_per_interval",
+                           "average_trade_return", "win_rate", "average_winning_trade", "average_losing_trade"]:
+                    display_metrics[key] = to_percentage(value)
+                elif key == "sharpe_ratio":
+                    display_metrics[key] = f"{value:.2f}"
+                elif key == "profit_factor":
+                    display_metrics[key] = f"{value:.2f}"
+                elif key == "num_of_trades":
+                    display_metrics[key] = f"{value}"
                 else:
-                    st.info(f"Using '{date_column}' column for time detection.")
-                    detected_interval = detect_time_interval(strategy_trades, date_column) or 'daily'
-                    st.info(f"Detected interval: {detected_interval} — Periods per year: {get_periods_per_year(detected_interval)}")
+                    display_metrics[key] = f"{value}"
+            
+            cols = st.columns(3)
+            i = 0
+            for metric, val in display_metrics.items():
+                cols[i % 3].metric(metric.replace("_", " ").title(), val)
+                i += 1
+            
+            if date_column:
+                strategy_trades[date_column] = pd.to_datetime(strategy_trades[date_column])
+                strategy_trades = strategy_trades.sort_values(date_column)
+                equity_series = strategy_trades['pnl'].cumsum()
+                fig_ind = go.Figure()
+                fig_ind.add_trace(go.Scatter(x=strategy_trades[date_column], y=equity_series, mode='lines', name="Equity Curve"))
+                fig_ind.update_layout(title="Cumulative Profit Over Time", xaxis_title="Time", yaxis_title="Cumulative PnL")
+                st.plotly_chart(fig_ind, use_container_width=True)
+            else:
+                st.line_chart(strategy_trades['pnl'].cumsum())
+            
+            if date_column:
+                st.write("### Monthly Performance")
+                monthly_return = strategy_trades.set_index(pd.to_datetime(strategy_trades[date_column]))['pnl'].resample('ME').sum()
+                monthly_return_df = monthly_return.to_frame(name='Return')
+                monthly_return_df['Year'] = monthly_return_df.index.year
+                monthly_return_df['Month'] = monthly_return_df.index.strftime('%b')
+                pivot_table = monthly_return_df.pivot(index='Year', columns='Month', values='Return')
+                month_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+                pivot_table = pivot_table.reindex(columns=month_order)
+                ytd_series = strategy_trades.set_index(pd.to_datetime(strategy_trades[date_column]))['pnl'].resample('YE').sum()
+                ytd_series.index = ytd_series.index.year
+                pivot_table["YTD"] = ytd_series
+                styled_table = pivot_table.style.format("{:.2f}").map(color_negative_positive)
+                st.dataframe(styled_table, use_container_width=True)
+    
+    # --- Portfolio Tab ---
+    with tab2:
+        st.header("📊 Portfolio Performance")
+        all_strategy_names = list(strategies.keys())
+        selected_portfolio = st.multiselect("Select strategies to include in the portfolio:", options=all_strategy_names)
+        if selected_portfolio:
+            daily_pnl_list = []
+            daily_trade_list = []
+            for strategy_name in selected_portfolio:
+                df = strategies[strategy_name]
+                date_column = next((col for col in df.columns if col in candidate_columns), None)
+                if date_column is None:
+                    continue
+                df[date_column] = pd.to_datetime(df[date_column])
+                df = df.sort_values(date_column)
+                daily_pnl = df.set_index(date_column)['pnl'].resample('D').sum()
+                daily_trade = df.set_index(date_column)['trade'].resample('D').sum()
+                daily_pnl_list.append(daily_pnl)
+                daily_trade_list.append(daily_trade)
+            if not daily_pnl_list:
+                st.error("None of the selected strategies have a valid date column for daily resampling.")
+            else:
+                pnl_df = pd.concat(daily_pnl_list, axis=1)
+                portfolio_daily_pnl = pnl_df.mean(axis=1)
+                trade_df = pd.concat(daily_trade_list, axis=1)
+                portfolio_daily_trade = trade_df.sum(axis=1)
                 
-                metrics = calculate_metrics(strategy_trades, detected_interval)
+                portfolio_df = pd.DataFrame({"pnl": portfolio_daily_pnl, "trade": portfolio_daily_trade})
+                aggregated_metrics = calculate_metrics(portfolio_df, "daily")
                 
-                st.write("### Performance Metrics")
-                display_metrics = {}
-                for key, value in metrics.items():
-                    if key == "cumulative_pnL":
+                rolling_window = 180
+                rolling_mean = portfolio_daily_pnl.rolling(window=rolling_window).mean()
+                rolling_std = portfolio_daily_pnl.rolling(window=rolling_window).std()
+                rolling_sharpe = (rolling_mean / rolling_std * np.sqrt(365)).replace([np.inf, -np.inf], np.nan)
+                avg_rolling_sharpe = rolling_sharpe.mean()
+                
+                raw_list = []
+                for strategy_name in selected_portfolio:
+                    df = strategies[strategy_name].copy()
+                    date_column = next((col for col in df.columns if col in candidate_columns), None)
+                    if date_column is None:
                         continue
-                    if key in ["total_returns", "annualized_avg_return", "max_drawdown", "trades_per_interval",
-                               "average_trade_return", "win_rate", "average_winning_trade", "average_losing_trade"]:
-                        display_metrics[key] = to_percentage(value)
-                    elif key == "sharpe_ratio":
-                        display_metrics[key] = f"{value:.2f}"
-                    elif key == "profit_factor":
-                        display_metrics[key] = f"{value:.2f}"
-                    elif key == "num_of_trades":
-                        display_metrics[key] = f"{value}"
+                    df["date"] = pd.to_datetime(df[date_column])
+                    raw_list.append(df[["pnl", "trade", "date"]])
+                if raw_list:
+                    combined_raw = pd.concat(raw_list)
+                    combined_raw = combined_raw.sort_values("date")
+                    raw_metrics = calculate_metrics(combined_raw, "daily")
+                else:
+                    raw_metrics = {}
+                
+                display_metrics = {}
+                display_metrics["Total Returns"] = aggregated_metrics["total_returns"]
+                display_metrics["Annualized Avg Return"] = aggregated_metrics["annualized_avg_return"]
+                display_metrics["Max Drawdown"] = aggregated_metrics["max_drawdown"]
+                display_metrics["Sharpe Ratio"] = aggregated_metrics["sharpe_ratio"]
+                display_metrics["Trades Per Interval"] = aggregated_metrics["trades_per_interval"]
+                display_metrics["Number of Trades"] = raw_metrics.get("num_of_trades", 0)
+                display_metrics["Average Trade Return"] = raw_metrics.get("average_trade_return", 0)
+                display_metrics["Win Rate"] = raw_metrics.get("win_rate", 0)
+                display_metrics["Average Winning Trade"] = raw_metrics.get("average_winning_trade", 0)
+                display_metrics["Average Losing Trade"] = raw_metrics.get("average_losing_trade", 0)
+                display_metrics["Profit Factor"] = raw_metrics.get("profit_factor", 0)
+                display_metrics["Rolling Sharpe"] = avg_rolling_sharpe
+                
+                formatted_metrics = {}
+                for k, v in display_metrics.items():
+                    if k in ["Total Returns", "Annualized Avg Return", "Max Drawdown", "Trades Per Interval", "Win Rate"]:
+                        formatted_metrics[k] = to_percentage(v)
+                    elif k in ["Sharpe Ratio", "Rolling Sharpe"]:
+                        formatted_metrics[k] = f"{v:.2f}"
+                    elif k in ["Average Trade Return", "Average Winning Trade", "Average Losing Trade", "Profit Factor"]:
+                        formatted_metrics[k] = f"{v:.2f}"
+                    elif k == "Number of Trades":
+                        formatted_metrics[k] = f"{v}"
                     else:
-                        display_metrics[key] = f"{value}"
+                        formatted_metrics[k] = str(v)
                 
                 cols = st.columns(3)
                 i = 0
-                for metric, val in display_metrics.items():
-                    cols[i % 3].metric(metric.replace("_", " ").title(), val)
+                for metric, val in formatted_metrics.items():
+                    cols[i % 3].metric(metric, val)
                     i += 1
                 
-                if date_column:
-                    strategy_trades[date_column] = pd.to_datetime(strategy_trades[date_column])
-                    strategy_trades = strategy_trades.sort_values(date_column)
-                    equity_series = strategy_trades['pnl'].cumsum()
-                    fig_ind = go.Figure()
-                    fig_ind.add_trace(go.Scatter(x=strategy_trades[date_column], y=equity_series, mode='lines', name="Equity Curve"))
-                    fig_ind.update_layout(title="Cumulative Profit Over Time", xaxis_title="Time", yaxis_title="Cumulative PnL")
-                    st.plotly_chart(fig_ind, use_container_width=True)
-                else:
-                    st.line_chart(strategy_trades['pnl'].cumsum())
+                metrics_json = json.dumps(formatted_metrics, indent=2)
+                st.download_button("Export Performance Metrics (JSON)", data=metrics_json, file_name="portfolio_metrics.json", mime="application/json")
                 
-                if date_column:
-                    st.write("### Monthly Performance")
-                    monthly_return = strategy_trades.set_index(pd.to_datetime(strategy_trades[date_column]))['pnl'].resample('ME').sum()
-                    monthly_return_df = monthly_return.to_frame(name='Return')
-                    monthly_return_df['Year'] = monthly_return_df.index.year
-                    monthly_return_df['Month'] = monthly_return_df.index.strftime('%b')
-                    pivot_table = monthly_return_df.pivot(index='Year', columns='Month', values='Return')
-                    month_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-                    pivot_table = pivot_table.reindex(columns=month_order)
-                    ytd_series = strategy_trades.set_index(pd.to_datetime(strategy_trades[date_column]))['pnl'].resample('YE').sum()
-                    ytd_series.index = ytd_series.index.year
-                    pivot_table["YTD"] = ytd_series
-                    styled_table = pivot_table.style.format("{:.2f}").map(color_negative_positive)
-                    st.dataframe(styled_table, use_container_width=True)
-        
-        # --- Portfolio Tab ---
-        with tab2:
-            st.header("📊 Portfolio Performance")
-            selected_portfolio = st.multiselect("Select strategies to include in the portfolio:", options=all_strategy_names)
-            if selected_portfolio:
-                candidate_columns = ['Entry Date', 'Exit Date', 'Trade Date', 'Date/Time', 'timestamp', 'datetime', 'date']
-                daily_pnl_list = []
-                daily_trade_list = []
-                for strategy_name in selected_portfolio:
-                    df = strategies[strategy_name]
-                    date_column = next((col for col in df.columns if col in candidate_columns), None)
-                    if date_column is None:
-                        continue
-                    df[date_column] = pd.to_datetime(df[date_column])
-                    df = df.sort_values(date_column)
-                    daily_pnl = df.set_index(date_column)['pnl'].resample('D').sum()
-                    daily_trade = df.set_index(date_column)['trade'].resample('D').sum()
-                    daily_pnl_list.append(daily_pnl)
-                    daily_trade_list.append(daily_trade)
-                if not daily_pnl_list:
-                    st.error("None of the selected strategies have a valid date column for daily resampling.")
-                else:
-                    pnl_df = pd.concat(daily_pnl_list, axis=1)
-                    portfolio_daily_pnl = pnl_df.mean(axis=1)
-                    trade_df = pd.concat(daily_trade_list, axis=1)
-                    portfolio_daily_trade = trade_df.sum(axis=1)
-                    
-                    portfolio_df = pd.DataFrame({"pnl": portfolio_daily_pnl, "trade": portfolio_daily_trade})
-                    aggregated_metrics = calculate_metrics(portfolio_df, "daily")
-                    
-                    rolling_window = 180
-                    rolling_mean = portfolio_daily_pnl.rolling(window=rolling_window).mean()
-                    rolling_std = portfolio_daily_pnl.rolling(window=rolling_window).std()
-                    rolling_sharpe = (rolling_mean / rolling_std * np.sqrt(365)).replace([np.inf, -np.inf], np.nan)
-                    avg_rolling_sharpe = rolling_sharpe.mean()
-                    
-                    raw_list = []
-                    for strategy_name in selected_portfolio:
-                        df = strategies[strategy_name].copy()
-                        date_column = next((col for col in df.columns if col in candidate_columns), None)
-                        if date_column is None:
-                            continue
-                        df["date"] = pd.to_datetime(df[date_column])
-                        raw_list.append(df[["pnl", "trade", "date"]])
-                    if raw_list:
-                        combined_raw = pd.concat(raw_list)
-                        combined_raw = combined_raw.sort_values("date")
-                        raw_metrics = calculate_metrics(combined_raw, "daily")
-                    else:
-                        raw_metrics = {}
-                    
-                    display_metrics = {}
-                    display_metrics["Total Returns"] = aggregated_metrics["total_returns"]
-                    display_metrics["Annualized Avg Return"] = aggregated_metrics["annualized_avg_return"]
-                    display_metrics["Max Drawdown"] = aggregated_metrics["max_drawdown"]
-                    display_metrics["Sharpe Ratio"] = aggregated_metrics["sharpe_ratio"]
-                    display_metrics["Trades Per Interval"] = aggregated_metrics["trades_per_interval"]
-                    display_metrics["Number of Trades"] = raw_metrics.get("num_of_trades", 0)
-                    display_metrics["Average Trade Return"] = raw_metrics.get("average_trade_return", 0)
-                    display_metrics["Win Rate"] = raw_metrics.get("win_rate", 0)
-                    display_metrics["Average Winning Trade"] = raw_metrics.get("average_winning_trade", 0)
-                    display_metrics["Average Losing Trade"] = raw_metrics.get("average_losing_trade", 0)
-                    display_metrics["Profit Factor"] = raw_metrics.get("profit_factor", 0)
-                    display_metrics["Rolling Sharpe"] = avg_rolling_sharpe
-                    
-                    formatted_metrics = {}
-                    for k, v in display_metrics.items():
-                        if k in ["Total Returns", "Annualized Avg Return", "Max Drawdown", "Trades Per Interval", "Win Rate"]:
-                            formatted_metrics[k] = to_percentage(v)
-                        elif k in ["Sharpe Ratio", "Rolling Sharpe"]:
-                            formatted_metrics[k] = f"{v:.2f}"
-                        elif k in ["Average Trade Return", "Average Winning Trade", "Average Losing Trade", "Profit Factor"]:
-                            formatted_metrics[k] = f"{v:.2f}"
-                        elif k == "Number of Trades":
-                            formatted_metrics[k] = f"{v}"
-                        else:
-                            formatted_metrics[k] = str(v)
-                    
-                    cols = st.columns(3)
-                    i = 0
-                    for metric, val in formatted_metrics.items():
-                        cols[i % 3].metric(metric, val)
-                        i += 1
-                    
-                    metrics_json = json.dumps(formatted_metrics, indent=2)
-                    st.download_button("Export Performance Metrics (JSON)", data=metrics_json, file_name="portfolio_metrics.json", mime="application/json")
-                    
-                    portfolio_equity = portfolio_daily_pnl.cumsum()
-                    fig_port = go.Figure()
-                    fig_port.add_trace(go.Scatter(x=portfolio_equity.index, y=portfolio_equity, mode='lines', name="Portfolio Equity Curve"))
-                    fig_port.update_layout(title="Cumulative Portfolio Profit Over Time", xaxis_title="Time", yaxis_title="Cumulative PnL")
-                    st.plotly_chart(fig_port, use_container_width=True)
-                    
-                    st.write("### Monthly Performance")
-                    monthly_portfolio_return = portfolio_daily_pnl.resample('ME').sum()
-                    monthly_portfolio_df = monthly_portfolio_return.to_frame(name='Return')
-                    monthly_portfolio_df['Year'] = monthly_portfolio_df.index.year
-                    monthly_portfolio_df['Month'] = monthly_portfolio_df.index.strftime('%b')
-                    pivot_table_portfolio = monthly_portfolio_df.pivot(index='Year', columns='Month', values='Return')
-                    month_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-                    pivot_table_portfolio = pivot_table_portfolio.reindex(columns=month_order)
-                    ytd_series_portfolio = portfolio_daily_pnl.resample('YE').sum()
-                    ytd_series_portfolio.index = ytd_series_portfolio.index.year
-                    pivot_table_portfolio["YTD"] = ytd_series_portfolio
-                    styled_table_portfolio = pivot_table_portfolio.style.format("{:.2f}").map(color_negative_positive)
-                    st.dataframe(styled_table_portfolio, use_container_width=True)
-            else:
-                st.info("Select at least one strategy to view portfolio performance.")
-        
-        # --- Correlation Tab ---
-        with tab3:
-            st.header("📊 Strategy Correlation")
+                portfolio_equity = portfolio_daily_pnl.cumsum()
+                fig_port = go.Figure()
+                fig_port.add_trace(go.Scatter(x=portfolio_equity.index, y=portfolio_equity, mode='lines', name="Portfolio Equity Curve"))
+                fig_port.update_layout(title="Cumulative Portfolio Profit Over Time", xaxis_title="Time", yaxis_title="Cumulative PnL")
+                st.plotly_chart(fig_port, use_container_width=True)
+                
+                st.write("### Monthly Performance")
+                monthly_portfolio_return = portfolio_daily_pnl.resample('ME').sum()
+                monthly_portfolio_df = monthly_portfolio_return.to_frame(name='Return')
+                monthly_portfolio_df['Year'] = monthly_portfolio_df.index.year
+                monthly_portfolio_df['Month'] = monthly_portfolio_df.index.strftime('%b')
+                pivot_table_portfolio = monthly_portfolio_df.pivot(index='Year', columns='Month', values='Return')
+                month_order = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+                pivot_table_portfolio = pivot_table_portfolio.reindex(columns=month_order)
+                ytd_series_portfolio = portfolio_daily_pnl.resample('YE').sum()
+                ytd_series_portfolio.index = ytd_series_portfolio.index.year
+                pivot_table_portfolio["YTD"] = ytd_series_portfolio
+                styled_table_portfolio = pivot_table_portfolio.style.format("{:.2f}").map(color_negative_positive)
+                st.dataframe(styled_table_portfolio, use_container_width=True)
+        else:
+            st.info("Select at least one strategy to view portfolio performance.")
+    
+    # --- Correlation Tab ---
+    with tab3:
+        st.header("📊 Strategy Correlation")
+        all_strategy_names = list(strategies.keys())
+        select_all_corr = st.checkbox("Select All Strategies for Correlation", key="select_all_corr")
+        if select_all_corr:
+            selected_corr = st.multiselect(
+                "Select strategies for correlation analysis:", 
+                options=all_strategy_names, 
+                default=all_strategy_names,
+                key="selected_corr"
+            )
+        else:
+            selected_corr = st.multiselect(
+                "Select strategies for correlation analysis:", 
+                options=all_strategy_names,
+                key="selected_corr"
+            )
             
-            # Multi-select for strategies (pre-select all if desired)
-            select_all_corr = st.checkbox("Select All Strategies for Correlation", key="select_all_corr")
-            if select_all_corr:
-                selected_corr = st.multiselect(
-                    "Select strategies for correlation analysis:", 
-                    options=all_strategy_names, 
-                    default=all_strategy_names,
-                    key="selected_corr"
-                )
+        if len(selected_corr) < 2:
+            st.info("Please select at least two strategies to view correlation.")
+        else:
+            daily_series_list = []
+            for strategy_name in selected_corr:
+                df = strategies[strategy_name]
+                date_column = next((col for col in df.columns if col in candidate_columns), None)
+                if date_column is None:
+                    st.warning(f"Strategy {strategy_name} does not have a valid date column and will be skipped.")
+                    continue
+                df[date_column] = pd.to_datetime(df[date_column])
+                df = df.sort_values(date_column)
+                daily_pnl = df.set_index(date_column)['pnl'].resample('D').sum()
+                daily_pnl.name = strategy_name
+                daily_series_list.append(daily_pnl)
+            if len(daily_series_list) < 2:
+                st.error("Not enough valid strategies for correlation analysis.")
             else:
-                selected_corr = st.multiselect(
-                    "Select strategies for correlation analysis:", 
-                    options=all_strategy_names,
-                    key="selected_corr"
+                pnl_df = pd.concat(daily_series_list, axis=1)
+                pnl_df = pnl_df.fillna(0)
+                corr_matrix = pnl_df.corr()
+                custom_color_scale = [(0, "red"), (0.5, "white"), (1, "darkblue")]
+                fig_corr = px.imshow(
+                    corr_matrix,
+                    text_auto=".2f",
+                    aspect="auto",
+                    title="Correlation Heatmap",
+                    color_continuous_scale=custom_color_scale,
+                    zmin=-1,
+                    zmax=1
                 )
+                fig_corr.update_xaxes(tickangle=90)
+                st.plotly_chart(fig_corr, use_container_width=True)
                 
-            if len(selected_corr) < 2:
-                st.info("Please select at least two strategies to view correlation.")
-            else:
-                candidate_columns = ['Entry Date', 'Exit Date', 'Trade Date', 'Date/Time', 'timestamp', 'datetime', 'date']
-                daily_series_list = []
-                for strategy_name in selected_corr:
-                    df = strategies[strategy_name]
-                    date_column = next((col for col in df.columns if col in candidate_columns), None)
-                    if date_column is None:
-                        st.warning(f"Strategy {strategy_name} does not have a valid date column and will be skipped.")
-                        continue
-                    df[date_column] = pd.to_datetime(df[date_column])
-                    df = df.sort_values(date_column)
-                    daily_pnl = df.set_index(date_column)['pnl'].resample('D').sum()
-                    daily_pnl.name = strategy_name
-                    daily_series_list.append(daily_pnl)
-                if len(daily_series_list) < 2:
-                    st.error("Not enough valid strategies for correlation analysis.")
-                else:
-                    pnl_df = pd.concat(daily_series_list, axis=1)
-                    pnl_df = pnl_df.fillna(0)
-                    corr_matrix = pnl_df.corr()
-                    custom_color_scale = [(0, "red"), (0.5, "white"), (1, "darkblue")]
-                    fig_corr = px.imshow(
-                        corr_matrix,
-                        text_auto=".2f",
-                        aspect="auto",
-                        title="Correlation Heatmap",
-                        color_continuous_scale=custom_color_scale,
-                        zmin=-1,
-                        zmax=1
-                    )
-                    fig_corr.update_xaxes(tickangle=90)
-                    st.plotly_chart(fig_corr, use_container_width=True)
+                st.write("### Diversified Portfolio Optimization (Graph-based)")
+                threshold = st.slider("Set correlation threshold", min_value=0.0, max_value=1.0, value=0.65, step=0.01, key="opt_threshold")
+                
+                if st.button("Run Portfolio Optimization", key="run_opt_button"):
+                    selected_strategies, G = select_diversified_strategies_graph(corr_matrix, threshold)
+                    eliminated = [s for s in corr_matrix.index if s not in selected_strategies]
+                    st.session_state.optimization_result = {
+                        "selected_strategies": selected_strategies,
+                        "eliminated": eliminated,
+                        "G": G,
+                    }
+                
+                if "optimization_result" in st.session_state:
+                    opt_result = st.session_state.optimization_result
+                    selected_strategies = opt_result["selected_strategies"]
+                    eliminated = opt_result["eliminated"]
+                    G = opt_result["G"]
                     
-                    st.write("### Diversified Portfolio Optimization (Graph-based)")
-                    threshold = st.slider("Set correlation threshold", min_value=0.0, max_value=1.0, value=0.65, step=0.01, key="opt_threshold")
+                    st.write(f"**Selected Strategies (total: {len(selected_strategies)}):** {selected_strategies}")
+                    st.write(f"**Eliminated Strategies:** {eliminated}")
                     
-                    # Run optimization once and store the result in session_state
-                    if st.button("Run Portfolio Optimization", key="run_opt_button"):
-                        selected_strategies, G = select_diversified_strategies_graph(corr_matrix, threshold)
-                        eliminated = [s for s in corr_matrix.index if s not in selected_strategies]
-                        st.session_state.optimization_result = {
-                            "selected_strategies": selected_strategies,
-                            "eliminated": eliminated,
-                            "G": G,
-                        }
+                    if len(selected_strategies) > 1:
+                        diversified_corr = corr_matrix.loc[selected_strategies, selected_strategies]
+                        fig_div = px.imshow(
+                            diversified_corr,
+                            text_auto=".2f",
+                            aspect="auto",
+                            title="Diversified Strategies Correlation Heatmap",
+                            color_continuous_scale=custom_color_scale,
+                            zmin=-1,
+                            zmax=1
+                        )
+                        fig_div.update_xaxes(tickangle=90)
+                        st.plotly_chart(fig_div, use_container_width=True)
                     
-                    # If optimization has been run, display the stored results.
-                    if "optimization_result" in st.session_state:
-                        opt_result = st.session_state.optimization_result
-                        selected_strategies = opt_result["selected_strategies"]
-                        eliminated = opt_result["eliminated"]
-                        G = opt_result["G"]
-                        
-                        st.write(f"**Selected Strategies (total: {len(selected_strategies)}):** {selected_strategies}")
-                        st.write(f"**Eliminated Strategies:** {eliminated}")
-                        
-                        if len(selected_strategies) > 1:
-                            diversified_corr = corr_matrix.loc[selected_strategies, selected_strategies]
-                            fig_div = px.imshow(
-                                diversified_corr,
-                                text_auto=".2f",
-                                aspect="auto",
-                                title="Diversified Strategies Correlation Heatmap",
-                                color_continuous_scale=custom_color_scale,
-                                zmin=-1,
-                                zmax=1
-                            )
-                            fig_div.update_xaxes(tickangle=90)
-                            st.plotly_chart(fig_div, use_container_width=True)
-                        
-                        fig_network = visualize_network(G, selected_strategies)
-                        st.plotly_chart(fig_network, use_container_width=True)
-                        
-                        # --- Metrics Table with Toggle ---
-                        st.write("### Strategy Metrics")
-                        # Filter metrics_df by the selected correlation strategies.
-                        table_df = metrics_df.loc[
-                            metrics_df["custom_id"].isin(selected_corr), 
-                            ["custom_id", "SR", "CR", "MDD", "AR", "trade_numbers"]
-                        ].copy()
-                        table_df.rename(columns={"custom_id": "File Name", "trade_numbers": "Trades"}, inplace=True)
-                        
-                        # Checkbox to toggle display of eliminated strategies.
-                        show_eliminated = st.checkbox("Show Eliminated Strategies", value=True, key="show_eliminated")
-                        
-                        # If unchecked, filter out eliminated rows.
-                        if not show_eliminated:
-                            table_df = table_df[~table_df["File Name"].isin(eliminated)]
-                        
-                        # Highlight eliminated strategies (if shown)
-                        def highlight_row(row):
-                            if row["File Name"] in eliminated:
-                                return ['background-color: #ff9999'] * len(row)
-                            else:
-                                return [''] * len(row)
-                        
-                        styled_table = table_df.style.apply(highlight_row, axis=1)
-                        st.dataframe(styled_table, use_container_width=True)
-
+                    fig_network = visualize_network(G, selected_strategies)
+                    st.plotly_chart(fig_network, use_container_width=True)
+                    
+                    st.write("### Strategy Metrics")
+                    table_df = metrics_df.loc[
+                        metrics_df["custom_id"].isin(selected_corr), 
+                        ["custom_id", "SR", "CR", "MDD", "AR", "trade_numbers"]
+                    ].copy()
+                    table_df.rename(columns={"custom_id": "File Name", "trade_numbers": "Trades"}, inplace=True)
+                    
+                    show_eliminated = st.checkbox("Show Eliminated Strategies", value=True, key="show_eliminated")
+                    
+                    if not show_eliminated:
+                        table_df = table_df[~table_df["File Name"].isin(eliminated)]
+                    
+                    def highlight_row(row):
+                        if row["File Name"] in eliminated:
+                            return ['background-color: #ff9999'] * len(row)
+                        else:
+                            return [''] * len(row)
+                    
+                    styled_table = table_df.style.apply(highlight_row, axis=1)
+                    st.dataframe(styled_table, use_container_width=True)
+    
 if __name__ == "__main__":
     main()

@@ -215,31 +215,47 @@ def save_uploaded_file(uploaded_file):
 def main():
     st.title("MMM Portfolio")
     
-    # Ensure the 'alpha' folder exists for saving uploaded CSV files.
-    if not os.path.exists("alpha"):
-        os.makedirs("alpha")
-        
-    # Define the desired columns for the metrics table.
+    # Ensure the 'alpha' folder exists for saving and loading CSV files.
+    alpha_folder = "alpha"
+    if not os.path.exists(alpha_folder):
+        os.makedirs(alpha_folder)
+    
+    # Define the desired columns for the metrics table exactly as specified.
     desired_columns = [
         "alpha_id", "custom_id", "alpha_formula", "manual_alpha_formula", "data_preprocessing",
-        "preprocessing_window", "model", "entry_exit_logic", "data_asset", "trade_asset", "transformation",
+        "preprocessing_window", "model", "entry_exit_logic", "data_asset", "trade_asset",
         "Alpha Details & Logic", "alpha remarks", "backtested_period", "timeframe",
-        "rolling_window_1", "rolling_window_2", "long_entry_threshold", "long_exit_threshold", 
+        "rolling_window_1", "rolling_window_2", "long_entry_threshold", "long_exit_threshold",
         "short_entry_threshold", "short_exit_threshold", "SR", "CR", "MDD", "AR", "trade_numbers",
         "datasource_structure", "shift_backtest_candle_minute"
     ]
     
-    # Load previously saved metrics from CSV, if available, from the current directory.
+    # Load previously saved metrics from CSV, if available.
     metrics_file_path = "metrics.csv"
     if os.path.exists(metrics_file_path):
         saved_metrics_df = pd.read_csv(metrics_file_path)
     else:
         saved_metrics_df = pd.DataFrame(columns=desired_columns)
     
+    # Initialize the strategies dictionary.
+    strategies = {}
+
+    # --------------------------------------------------
+    # Auto load CSV files from the alpha folder
+    # --------------------------------------------------
+    for file in os.listdir(alpha_folder):
+        if file.endswith(".csv"):
+            file_path = os.path.join(alpha_folder, file)
+            try:
+                df = pd.read_csv(file_path)
+                file_basename = os.path.splitext(file)[0]
+                strategies[file_basename] = df
+            except Exception as e:
+                st.error(f"Error loading file {file}: {e}")
+    
     # Allow multiple CSV file uploads for strategy data.
     uploaded_files = st.sidebar.file_uploader("Upload your CSV files", type=["csv"], accept_multiple_files=True)
     
-    strategies = {}
     new_metrics_records = []
     # Candidate columns to detect dates.
     candidate_columns = ['Entry Date', 'Exit Date', 'Trade Date', 'Date/Time', 'timestamp', 'datetime', 'date']
@@ -255,7 +271,9 @@ def main():
                 if 'pnl' not in df.columns or 'trade' not in df.columns:
                     st.error(f"File {uploaded_file.name} does not contain required 'pnl' and 'trade' columns.")
                     continue
-                strategies[uploaded_file.name] = df
+                # Use the basename for consistency.
+                file_basename = os.path.splitext(uploaded_file.name)[0]
+                strategies[file_basename] = df
             except Exception as e:
                 st.error(f"Error processing file {uploaded_file.name}: {e}")
         
@@ -281,10 +299,8 @@ def main():
                 calmar_ratio = annualized_avg_return / abs(max_drawdown)
             else:
                 calmar_ratio = np.nan
-            # Remove the .csv extension from the file name for custom_id
-            file_basename = os.path.splitext(file_name)[0]
             record = {
-                "custom_id": file_basename,
+                "custom_id": file_name,
                 "alpha_formula": "",
                 "manual_alpha_formula": "",
                 "data_preprocessing": "",
@@ -293,7 +309,6 @@ def main():
                 "entry_exit_logic": "",
                 "data_asset": "",
                 "trade_asset": "",
-                "transformation": "",  # Empty default for transformation column.
                 "Alpha Details & Logic": "",
                 "alpha remarks": "",
                 "backtested_period": backtested_period,
@@ -330,22 +345,7 @@ def main():
     metrics_df = combined_df[desired_columns]
     
     # ------------------------------
-    # New: Replace Metrics Table Button
-    # ------------------------------
-    uploaded_metrics_file = st.sidebar.file_uploader("Upload metrics CSV to replace table", type=["csv"], key="upload_metrics_csv")
-    if st.sidebar.button("Replace Table with Uploaded Metrics"):
-        if uploaded_metrics_file is not None:
-            try:
-                new_metrics = pd.read_csv(uploaded_metrics_file)
-                metrics_df = new_metrics
-                st.success("Metrics table replaced with uploaded file!")
-            except Exception as e:
-                st.error("Error reading the uploaded metrics CSV: " + str(e))
-        else:
-            st.warning("Please upload a metrics CSV file first.")
-    
-    # ------------------------------
-    # Display and Update the Metrics Table
+    # Display and Automatically Update the Metrics Table
     # ------------------------------
     st.subheader("📄 Files Metrics Overview")
     gb = GridOptionsBuilder.from_dataframe(metrics_df)
@@ -353,10 +353,6 @@ def main():
     # Configure the data_asset and trade_asset columns as dropdowns with BTC and ETH options.
     gb.configure_column("data_asset", cellEditor="agSelectCellEditor", cellEditorParams={"values": ["BTC", "ETH"]})
     gb.configure_column("trade_asset", cellEditor="agSelectCellEditor", cellEditorParams={"values": ["BTC", "ETH"]})
-    # Configure the transformation column as a dropdown with the given options.
-    gb.configure_column("transformation", cellEditor="agSelectCellEditor", cellEditorParams={
-        "values": ["none", "log", "log10", "sqrt", "cbrt", "exp", "diff", "pct_change", "square"]
-    })
     gb.configure_selection("single", use_checkbox=False)
     gb.configure_grid_options(
         onGridReady=""" 
@@ -374,18 +370,13 @@ def main():
         height=300,
         fit_columns_on_grid_load=True,
     )
+    # Auto-update the CSV file on every change in the table.
+    updated_metrics = ag_response['data']
+    updated_df = pd.DataFrame(updated_metrics)
+    updated_df.to_csv(metrics_file_path, index=False)
+    st.info("Metrics updated automatically to metrics.csv.")
     
-    # Remove the auto-update functionality.
-    # Instead, add a button that when clicked, saves the updated metrics to CSV.
-    if st.button("Update List"):
-        updated_metrics = ag_response['data']
-        updated_df = pd.DataFrame(updated_metrics)
-        updated_df.to_csv(metrics_file_path, index=False)
-        st.info("Metrics updated and saved to metrics.csv.")
-        # Optional: Uncomment the next line if you want to force all clients to refresh.
-        # st.experimental_rerun()
-    
-    # Add a download button to download the current metrics CSV.
+    # Add a download button for the current metrics CSV.
     csv_data = metrics_df.to_csv(index=False).encode('utf-8')
     st.download_button(
         label="Download CSV File",
@@ -665,27 +656,6 @@ def main():
                     
                     fig_network = visualize_network(G, selected_strategies)
                     st.plotly_chart(fig_network, use_container_width=True)
-                    
-                    st.write("### Strategy Metrics")
-                    table_df = metrics_df.loc[
-                        metrics_df["custom_id"].isin(selected_corr), 
-                        ["custom_id", "SR", "CR", "MDD", "AR", "trade_numbers"]
-                    ].copy()
-                    table_df.rename(columns={"custom_id": "File Name", "trade_numbers": "Trades"}, inplace=True)
-                    
-                    show_eliminated = st.checkbox("Show Eliminated Strategies", value=True, key="show_eliminated")
-                    
-                    if not show_eliminated:
-                        table_df = table_df[~table_df["File Name"].isin(eliminated)]
-                    
-                    def highlight_row(row):
-                        if row["File Name"] in eliminated:
-                            return ['background-color: #ff9999'] * len(row)
-                        else:
-                            return [''] * len(row)
-                    
-                    styled_table = table_df.style.apply(highlight_row, axis=1)
-                    st.dataframe(styled_table, use_container_width=True)
     
 if __name__ == "__main__":
     main()

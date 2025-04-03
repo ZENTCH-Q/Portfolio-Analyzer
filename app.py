@@ -237,7 +237,7 @@ def main():
         saved_metrics_df = pd.DataFrame(columns=desired_columns)
     
     # Allow multiple CSV file uploads for strategy data.
-    uploaded_files = st.sidebar.file_uploader("Upload your Alpha_CSV files", type=["csv"], accept_multiple_files=True)
+    uploaded_files = st.sidebar.file_uploader("Upload your CSV files", type=["csv"], accept_multiple_files=True)
     
     strategies = {}
     new_metrics_records = []
@@ -375,15 +375,19 @@ def main():
         fit_columns_on_grid_load=True,
     )
     
-    # Remove the auto-update functionality.
-    # Instead, add a button that when clicked, saves the updated metrics to CSV.
-    if st.button("Update List"):
-        updated_metrics = ag_response['data']
-        updated_df = pd.DataFrame(updated_metrics)
-        updated_df.to_csv(metrics_file_path, index=False)
-        st.info("Metrics updated and saved to metrics.csv.")
-        # Optional: Uncomment the next line if you want to force all clients to refresh.
-        # st.experimental_rerun()
+    # Add two side-by-side buttons for updating and refreshing the metrics list.
+    col_update, col_refresh = st.columns(2)
+    with col_update:
+        if st.button("Update List"):
+            updated_metrics = ag_response['data']
+            updated_df = pd.DataFrame(updated_metrics)
+            updated_df.to_csv(metrics_file_path, index=False)
+            st.info("Metrics updated and saved to metrics.csv.")
+            # Optional: Uncomment the next line if you want to force all clients to refresh.
+            # st.experimental_rerun()
+    with col_refresh:
+        if st.button("Refresh List", key="refresh_list"):
+            st.experimental_rerun()
     
     # Add a download button to download the current metrics CSV.
     csv_data = metrics_df.to_csv(index=False).encode('utf-8')

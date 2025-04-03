@@ -236,7 +236,7 @@ def main():
     else:
         saved_metrics_df = pd.DataFrame(columns=desired_columns)
     
-    # Allow multiple CSV file uploads.
+    # Allow multiple CSV file uploads for strategy data.
     uploaded_files = st.sidebar.file_uploader("Upload your CSV files", type=["csv"], accept_multiple_files=True)
     
     strategies = {}
@@ -281,8 +281,10 @@ def main():
                 calmar_ratio = annualized_avg_return / abs(max_drawdown)
             else:
                 calmar_ratio = np.nan
+            # Remove the .csv extension from the file name for custom_id
+            file_basename = os.path.splitext(file_name)[0]
             record = {
-                "custom_id": file_name,
+                "custom_id": file_basename,
                 "alpha_formula": "",
                 "manual_alpha_formula": "",
                 "data_preprocessing": "",
@@ -327,7 +329,24 @@ def main():
     combined_df.insert(0, "alpha_id", alpha_ids)
     metrics_df = combined_df[desired_columns]
     
-    # Display the Metrics Table using AgGrid.
+    # ------------------------------
+    # New: Replace Metrics Table Button
+    # ------------------------------
+    uploaded_metrics_file = st.sidebar.file_uploader("Upload metrics CSV to replace table", type=["csv"], key="upload_metrics_csv")
+    if st.sidebar.button("Replace Table with Uploaded Metrics"):
+        if uploaded_metrics_file is not None:
+            try:
+                new_metrics = pd.read_csv(uploaded_metrics_file)
+                metrics_df = new_metrics
+                st.success("Metrics table replaced with uploaded file!")
+            except Exception as e:
+                st.error("Error reading the uploaded metrics CSV: " + str(e))
+        else:
+            st.warning("Please upload a metrics CSV file first.")
+    
+    # ------------------------------
+    # Display and Update the Metrics Table
+    # ------------------------------
     st.subheader("📄 Files Metrics Overview")
     gb = GridOptionsBuilder.from_dataframe(metrics_df)
     gb.configure_default_column(editable=True, resizable=True, minWidth=150)
@@ -356,13 +375,28 @@ def main():
         fit_columns_on_grid_load=True,
     )
     
-    # Automatically save the updated metrics back to CSV.
-    updated_metrics = ag_response['data']
-    updated_df = pd.DataFrame(updated_metrics)
-    updated_df.to_csv(metrics_file_path, index=False)
-    st.info("Metrics automatically saved to metrics.csv.")
+    # Remove the auto-update functionality.
+    # Instead, add a button that when clicked, saves the updated metrics to CSV.
+    if st.button("Update List"):
+        updated_metrics = ag_response['data']
+        updated_df = pd.DataFrame(updated_metrics)
+        updated_df.to_csv(metrics_file_path, index=False)
+        st.info("Metrics updated and saved to metrics.csv.")
+        # Optional: Uncomment the next line if you want to force all clients to refresh.
+        # st.experimental_rerun()
     
-    # --- Main Tabs ---
+    # Add a download button to download the current metrics CSV.
+    csv_data = metrics_df.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="Download CSV File",
+        data=csv_data,
+        file_name="metrics.csv",
+        mime="text/csv"
+    )
+    
+    # ------------------------------
+    # Main Tabs
+    # ------------------------------
     tab1, tab2, tab3 = st.tabs(["Individual Strategy", "Portfolio", "Correlation"])
     
     # --- Individual Strategy Tab ---

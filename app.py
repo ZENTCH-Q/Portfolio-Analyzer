@@ -237,7 +237,7 @@ def main():
         saved_metrics_df = pd.DataFrame(columns=desired_columns)
     
     # Allow multiple CSV file uploads for strategy data.
-    uploaded_files = st.sidebar.file_uploader("Upload your CSV files", type=["csv"], accept_multiple_files=True)
+    uploaded_files = st.sidebar.file_uploader("Upload your Alpha_CSV files", type=["csv"], accept_multiple_files=True)
     
     strategies = {}
     new_metrics_records = []
